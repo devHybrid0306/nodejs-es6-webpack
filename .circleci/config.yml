@@ -1,0 +1,70 @@
+# Javascript Node CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-javascript/ for more details
+#
+version: 2
+jobs:
+  build:
+    docker:
+      # specify the version you desire here
+      - image: ngo275/cloud-sdk-nodejs-yarn
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - setup_remote_docker
+
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+            VER="17.03.0-ce"
+            curl -L -o /tmp/docker-$VER.tgz https://get.docker.com/builds/Linux/x86_64/docker-$VER.tgz
+            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
+            mv /tmp/docker/* /usr/bin
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+          - v1-dependencies-{{ checksum "package.json" }}
+          # fallback to using the latest cache if no exact match is found
+          - v1-dependencies-
+
+      - run:
+          name: setup docker workspace
+          command: |
+            mkdir -p /caches
+            chmod 777 /caches
+
+      - run: yarn install
+
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+
+      - run: yarn test
+
+      - run:
+          name: Permission of deploy command
+          command: |
+            chmod +x ./docker/staging/deploy.sh
+            chmod +x ./docker/production/deploy.sh
+
+      - run:
+          name: Build Docker containers
+          command: |
+            docker build --cache-from=gateway -f docker/Dockerfile -t gateway .
+            docker build --cache-from=gateway -f docker/nginx/Dockerfile -t gateway-nginx .
+
+      - deploy:
+          name: Push application Docker image
+          command: |
+            # Memo: Increment major version if we have big changes
+            if [ "${CIRCLE_BRANCH}" == "develop" ]; then
+              ./docker/staging/deploy.sh v1
+            fi
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              ./docker/production/deploy.sh v1
+            fi
